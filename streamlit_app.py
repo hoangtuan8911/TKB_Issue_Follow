@@ -261,7 +261,7 @@ def render_sidebar(all_customers):
             if matches:
                 st.caption(f"Tìm thấy {len(matches)} khách hàng trùng khớp:")
                 for cid, c in matches.items():
-                    if st.button(f"→ {c.get('name')}", key=f"select_match_{cid}", use_container_width=True):
+                    if st.button(f"→ {c.get('name')}", key=f"select_match_{cid}", width='stretch'):
                         st.session_state.selected_customer_id = cid
                         st.session_state.selected_issue_id = None
                         st.rerun()
@@ -269,7 +269,7 @@ def render_sidebar(all_customers):
                 st.caption("Không tìm thấy khách hàng nào trùng.")
 
             if not exact_exists:
-                if st.button(f"+ Thêm Mới '{typed}'", key="add_new_cust_btn", type="primary", use_container_width=True):
+                if st.button(f"+ Thêm Mới '{typed}'", key="add_new_cust_btn", type="primary", width='stretch'):
                     new_id = save_new_customer(typed.strip())
                     st.session_state.selected_customer_id = new_id
                     st.session_state.selected_issue_id = None
@@ -282,7 +282,7 @@ def render_sidebar(all_customers):
         icon = "⚠️" if overdue else "📁"
         label = f"{icon} {c.get('name', '')}  (P:{pending}/F:{fixed})"
         is_selected = cid == st.session_state.get("selected_customer_id")
-        if st.sidebar.button(label, key=f"cust_btn_{cid}", use_container_width=True,
+        if st.sidebar.button(label, key=f"cust_btn_{cid}", width='stretch',
                               type="primary" if is_selected else "secondary"):
             st.session_state.selected_customer_id = cid
             st.session_state.selected_issue_id = None
@@ -340,7 +340,7 @@ def render_issue_list(cid, issues):
         icon = "⚠️" if overdue else ("🔹" if status == "Pending" else "✅")
         label = f"{icon} {issue.get('title', '')} — {issue.get('device', 'N/A')} [{status}]"
         is_selected = iid == st.session_state.selected_issue_id
-        if st.button(label, key=f"issue_btn_{iid}", use_container_width=True,
+        if st.button(label, key=f"issue_btn_{iid}", width='stretch',
                      type="primary" if is_selected else "secondary"):
             st.session_state.selected_issue_id = iid
             st.rerun()
@@ -510,7 +510,7 @@ def render_stats_tab(all_customers):
 
     df = pd.DataFrame.from_dict(stats, orient="index").sort_values("Tổng số", ascending=False)
     st.caption(f"{len(df)} nhóm | {int(df['Tổng số'].sum())} issue")
-    st.dataframe(df, use_container_width=True)
+    st.dataframe(df, width='stretch')
     st.markdown("###### Top 8 theo tổng số Issue")
     st.bar_chart(df["Tổng số"].head(8))
 
