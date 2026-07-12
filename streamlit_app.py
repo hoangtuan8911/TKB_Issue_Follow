@@ -42,6 +42,16 @@ def check_password():
 @st.cache_resource
 def init_firebase():
     if not firebase_admin._apps:
+        missing = [k for k in ("app_password", "firebase_database_url", "firebase_service_account") if k not in st.secrets]
+        if missing:
+            st.error(
+                "⚠️ Thiếu cấu hình Secrets trên Streamlit Cloud: **" + ", ".join(missing) + "**\n\n"
+                "Vào Settings → Secrets của app, dán đúng theo mẫu `secrets.toml.example`. "
+                "Lưu ý: `app_password` và `firebase_database_url` phải nằm **TRƯỚC** dòng "
+                "`[firebase_service_account]` — nếu đặt sau, TOML sẽ hiểu nhầm 2 dòng đó "
+                "thuộc bên trong bảng `firebase_service_account` và app sẽ không tìm thấy."
+            )
+            st.stop()
         cred = credentials.Certificate(dict(st.secrets["firebase_service_account"]))
         firebase_admin.initialize_app(cred, {"databaseURL": st.secrets["firebase_database_url"]})
     return True
