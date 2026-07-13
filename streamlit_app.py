@@ -4,9 +4,10 @@ import uuid
 from datetime import date, datetime
 
 import pandas as pd
+import requests
 import streamlit as st
-import firebase_admin
-from firebase_admin import credentials, db
+from google.oauth2 import service_account
+import google.auth.transport.requests as google_auth_requests
 
 # ==========================================
 # CẤU HÌNH TRANG
@@ -36,25 +37,72 @@ def check_password():
 
 
 # ==========================================
-# KẾT NỐI FIREBASE (dùng chung project với app TKB_TODO)
+# KẾT NỐI FIREBASE QUA REST API (KHÔNG dùng firebase-admin/grpcio)
+# firebase-admin kéo theo google-cloud-firestore -> grpcio dù app này không hề
+# dùng Firestore, và grpcio là nguyên nhân nghi ngờ hàng đầu gây Segmentation fault
+# trên Streamlit Cloud. Realtime Database vốn chỉ là REST API thuần, không cần grpc -
+# ở đây dùng google-auth (nhẹ, không có phần mở rộng C++ nặng) để lấy access token,
+# rồi gọi thẳng REST endpoint, giống hệt cách bản Tkinter cũ đã làm qua urllib.
 # "issue_follow" là node cùng cấp với "tasks" trong cùng 1 Realtime Database.
 # ==========================================
+FIREBASE_SCOPES = [
+    "https://www.googleapis.com/auth/firebase.database",
+    "https://www.googleapis.com/auth/userinfo.email",
+]
+
+
+def check_secrets():
+    missing = [k for k in ("app_password", "firebase_database_url", "firebase_service_account") if k not in st.secrets]
+    if missing:
+        st.error(
+            "⚠️ Thiếu cấu hình Secrets trên Streamlit Cloud: **" + ", ".join(missing) + "**\n\n"
+            "Vào Settings → Secrets của app, dán đúng theo mẫu `secrets.toml.example`. "
+            "Lưu ý: `app_password` và `firebase_database_url` phải nằm **TRƯỚC** dòng "
+            "`[firebase_service_account]` — nếu đặt sau, TOML sẽ hiểu nhầm 2 dòng đó "
+            "thuộc bên trong bảng `firebase_service_account` và app sẽ không tìm thấy."
+        )
+        st.stop()
+
+
 @st.cache_resource
-def init_firebase():
-    if not firebase_admin._apps:
-        missing = [k for k in ("app_password", "firebase_database_url", "firebase_service_account") if k not in st.secrets]
-        if missing:
-            st.error(
-                "⚠️ Thiếu cấu hình Secrets trên Streamlit Cloud: **" + ", ".join(missing) + "**\n\n"
-                "Vào Settings → Secrets của app, dán đúng theo mẫu `secrets.toml.example`. "
-                "Lưu ý: `app_password` và `firebase_database_url` phải nằm **TRƯỚC** dòng "
-                "`[firebase_service_account]` — nếu đặt sau, TOML sẽ hiểu nhầm 2 dòng đó "
-                "thuộc bên trong bảng `firebase_service_account` và app sẽ không tìm thấy."
-            )
-            st.stop()
-        cred = credentials.Certificate(dict(st.secrets["firebase_service_account"]))
-        firebase_admin.initialize_app(cred, {"databaseURL": st.secrets["firebase_database_url"]})
-    return True
+def get_firebase_credentials():
+    info = dict(st.secrets["firebase_service_account"])
+    return service_account.Credentials.from_service_account_info(info, scopes=FIREBASE_SCOPES)
+
+
+def get_access_token():
+    creds = get_firebase_credentials()
+    if not creds.valid:
+        creds.refresh(google_auth_requests.Request())
+    return creds.token
+
+
+def _db_url(path):
+    base = st.secrets["firebase_database_url"].rstrip("/")
+    return f"{base}/{path}.json"
+
+
+def db_get(path):
+    resp = requests.get(_db_url(path), headers={"Authorization": f"Bearer {get_access_token()}"}, timeout=10)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def db_set(path, value):
+    resp = requests.put(_db_url(path), json=value, headers={"Authorization": f"Bearer {get_access_token()}"}, timeout=10)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def db_update(path, value):
+    resp = requests.patch(_db_url(path), json=value, headers={"Authorization": f"Bearer {get_access_token()}"}, timeout=10)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def db_delete(path):
+    resp = requests.delete(_db_url(path), headers={"Authorization": f"Bearer {get_access_token()}"}, timeout=10)
+    resp.raise_for_status()
 
 
 # ==========================================
@@ -62,28 +110,20 @@ def init_firebase():
 # Customer và Issue đều dùng ID nội bộ ngẫu nhiên làm key (KHÔNG dùng tên làm key)
 # để tránh lỗi ghi đè khi trùng tên, và tránh ký tự cấm của Firebase key (. $ # [ ] /).
 # ==========================================
-def customers_ref():
-    return db.reference("issue_follow/customers")
-
-
-def tasks_ref():
-    return db.reference("tasks")  # node dùng chung với TKB_TODO
-
-
 def load_all_customers():
-    data = customers_ref().get()
+    data = db_get("issue_follow/customers")
     return data or {}
 
 
 def save_new_customer(name):
     new_id = str(uuid.uuid4())[:8]
-    customers_ref().child(new_id).set({"name": name, "issues": {}})
+    db_set(f"issue_follow/customers/{new_id}", {"name": name, "issues": {}})
     return new_id
 
 
 def save_new_issue(customer_id, title, device, serial, url):
     new_id = str(uuid.uuid4())[:8]
-    customers_ref().child(customer_id).child("issues").child(new_id).set({
+    db_set(f"issue_follow/customers/{customer_id}/issues/{new_id}", {
         "title": title,
         "device": device.strip() if device else "N/A",
         "serial": serial.strip() if serial else "N/A",
@@ -95,7 +135,7 @@ def save_new_issue(customer_id, title, device, serial, url):
 
 
 def update_issue(customer_id, issue_id, title, device, serial, status, url):
-    customers_ref().child(customer_id).child("issues").child(issue_id).update({
+    db_update(f"issue_follow/customers/{customer_id}/issues/{issue_id}", {
         "title": title,
         "device": device.strip() if device else "N/A",
         "serial": serial.strip() if serial else "N/A",
@@ -106,7 +146,7 @@ def update_issue(customer_id, issue_id, title, device, serial, status, url):
 
 def add_activity(customer_id, issue_id, activity, act_date, pic, result, lead_time, close_issue):
     step_id = str(uuid.uuid4())[:8]
-    customers_ref().child(customer_id).child("issues").child(issue_id).child("steps").child(step_id).set({
+    db_set(f"issue_follow/customers/{customer_id}/issues/{issue_id}/steps/{step_id}", {
         "date": act_date,
         "activity": activity,
         "pic": pic.strip() if pic else "N/A",
@@ -114,24 +154,22 @@ def add_activity(customer_id, issue_id, activity, act_date, pic, result, lead_ti
         "lead_time": lead_time or "",
     })
     if close_issue:
-        customers_ref().child(customer_id).child("issues").child(issue_id).child("status").set("Fixed")
+        db_set(f"issue_follow/customers/{customer_id}/issues/{issue_id}/status", "Fixed")
 
 
 def update_activity(customer_id, issue_id, step_id, activity, act_date, pic, result, lead_time, close_issue):
-    customers_ref().child(customer_id).child("issues").child(issue_id).child("steps").child(step_id).update({
+    db_update(f"issue_follow/customers/{customer_id}/issues/{issue_id}/steps/{step_id}", {
         "date": act_date,
         "activity": activity,
         "pic": pic.strip() if pic else "N/A",
         "result": result.strip() if result else "",
         "lead_time": lead_time or "",
     })
-    customers_ref().child(customer_id).child("issues").child(issue_id).child("status").set(
-        "Fixed" if close_issue else "Pending"
-    )
+    db_set(f"issue_follow/customers/{customer_id}/issues/{issue_id}/status", "Fixed" if close_issue else "Pending")
 
 
 def delete_activity(customer_id, issue_id, step_id):
-    customers_ref().child(customer_id).child("issues").child(issue_id).child("steps").child(step_id).delete()
+    db_delete(f"issue_follow/customers/{customer_id}/issues/{issue_id}/steps/{step_id}")
 
 
 # ==========================================
@@ -225,14 +263,14 @@ def export_activity_to_task(cust_name, issue_title, step):
     pic_prefix = f"{pic_name}: " if pic_name else ""
     task_title = f"{pic_prefix}{act_name} cho case {issue_title} của khách hàng {cust_name}"
 
-    existing = tasks_ref().get() or {}
+    existing = db_get("tasks") or {}
     for t in existing.values():
         if t.get("task") == task_title and t.get("lead") == lead_time_val:
             st.info("Task công việc này đã được xuất sang hệ thống TKB_TODO từ trước rồi!")
             return
 
     timestamp_id = str(int(datetime.now().timestamp() * 1000))
-    tasks_ref().child(timestamp_id).set({
+    db_set(f"tasks/{timestamp_id}", {
         "id": timestamp_id,
         "task": task_title,
         "pic": pic_name,
@@ -569,7 +607,7 @@ def render_import_tab(all_customers):
                 }
                 count_issue += 1
             new_cid = str(uuid.uuid4())[:8]
-            customers_ref().child(new_cid).set({"name": cust_name, "issues": issues_out})
+            db_set(f"issue_follow/customers/{new_cid}", {"name": cust_name, "issues": issues_out})
             count_cust += 1
 
         st.success(f"Đã đồng bộ {count_cust} khách hàng, {count_issue} issue lên Firebase!")
@@ -583,7 +621,7 @@ def main():
     if not check_password():
         st.stop()
 
-    init_firebase()
+    check_secrets()
 
     st.title("🔧 Issue Follow — Hệ thống Quản lý & Gợi ý Khắc phục Sự cố Thiết bị")
 
