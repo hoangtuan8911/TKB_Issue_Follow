@@ -3,7 +3,6 @@ import re
 import uuid
 from datetime import date, datetime
 
-import pandas as pd
 import requests
 import streamlit as st
 from google.oauth2 import service_account
@@ -546,7 +545,7 @@ def render_stats_tab(all_customers):
                 key = issue.get("title") or "N/A"
             else:
                 key = issue.get("device") or "N/A"
-            key = str(key).strip() or "N/A"  # ép về string sạch, tránh None/kiểu lạ lọt vào Arrow serialize
+            key = str(key).strip() or "N/A"
 
             e = stats.setdefault(key, {"Tổng số": 0, "Pending": 0, "Fixed": 0, "Quá hạn": 0})
             e["Tổng số"] += 1
@@ -556,31 +555,49 @@ def render_stats_tab(all_customers):
                 e["Pending"] += 1
             if is_issue_overdue(issue):
                 e["Quá hạn"] += 1
-    print(f"CHECKPOINT stats: built stats dict, {len(stats)} keys: {list(stats.keys())}", flush=True)
+    print(f"CHECKPOINT stats: built stats dict, {len(stats)} keys", flush=True)
 
     if not stats:
         st.caption("Chưa có dữ liệu để thống kê.")
         return
 
-    # QUAN TRỌNG: KHÔNG dùng pd.DataFrame.from_dict(stats, orient="index") - đây chính là dòng gây
-    # Segmentation fault đã xác định được qua log (crash ngay tại đây, trước khi kịp render bất cứ
-    # gì ra Streamlit). Chuyển sang dựng DataFrame kiểu list-of-dict tiêu chuẩn, đã test riêng và
-    # xác nhận an toàn với pandas==3.0.3 hiện tại trên Streamlit Cloud.
-    rows = [{"Tên nhóm": name, **v} for name, v in stats.items()]
-    df = pd.DataFrame(rows).sort_values("Tổng số", ascending=False).reset_index(drop=True)
-    print("CHECKPOINT stats: DataFrame(rows) + sort_values OK", flush=True)
+    # QUAN TRỌNG: KHÔNG dùng pandas/Arrow (st.dataframe/st.bar_chart) ở tab này nữa - đã xác định
+    # qua log rằng pandas crash (Segmentation fault) ngay khi dựng DataFrame từ đúng bộ tên khách
+    # hàng thật này, bất kể dùng from_dict hay constructor thường. Thay bằng bảng + biểu đồ dựng
+    # tay từ st.columns/st.markdown - không đi qua pandas/pyarrow nên tránh được hoàn toàn.
+    sorted_items = sorted(stats.items(), key=lambda kv: -kv[1]["Tổng số"])
+    print("CHECKPOINT stats: sorted (pure python) OK", flush=True)
 
-    st.caption(f"{len(df)} nhóm | {int(df['Tổng số'].sum())} issue")
-    print("CHECKPOINT stats: caption rendered, before st.dataframe", flush=True)
-    try:
-        st.dataframe(df, width='stretch')
-        print("CHECKPOINT stats: st.dataframe OK, before st.bar_chart", flush=True)
-        st.markdown("###### Top 8 theo tổng số Issue")
-        st.bar_chart(df.head(8), x="Tên nhóm", y="Tổng số")
-        print("CHECKPOINT stats: st.bar_chart OK, function complete", flush=True)
-    except Exception as e:
-        st.error(f"Không hiện được bảng/biểu đồ thống kê (dữ liệu có thể chứa ký tự lạ): {e}")
-        st.write(df.to_dict())
+    total_issues = sum(v["Tổng số"] for v in stats.values())
+    st.caption(f"{len(stats)} nhóm | {total_issues} issue")
+
+    header_cols = st.columns([3, 1, 1, 1, 1])
+    for col, label in zip(header_cols, ["Tên nhóm", "Tổng số", "Pending", "Fixed", "Quá hạn"]):
+        col.markdown(f"**{label}**")
+    for name, v in sorted_items:
+        row_cols = st.columns([3, 1, 1, 1, 1])
+        row_cols[0].write(name)
+        row_cols[1].write(v["Tổng số"])
+        row_cols[2].write(v["Pending"])
+        row_cols[3].write(v["Fixed"])
+        row_cols[4].write(v["Quá hạn"])
+    print("CHECKPOINT stats: manual table rendered OK", flush=True)
+
+    st.markdown("###### Top 8 theo tổng số Issue")
+    top8 = sorted_items[:8]
+    max_total = max((v["Tổng số"] for _, v in top8), default=1) or 1
+    for name, v in top8:
+        pct = max(int(v["Tổng số"] / max_total * 100), 3)
+        bar_col, num_col = st.columns([5, 1])
+        with bar_col:
+            st.markdown(
+                f'<div style="font-size:13px;margin-bottom:2px;">{name}</div>'
+                f'<div style="background:#6f42c1;height:18px;width:{pct}%;border-radius:3px;"></div>',
+                unsafe_allow_html=True,
+            )
+        with num_col:
+            st.write(v["Tổng số"])
+    print("CHECKPOINT stats: manual bar chart rendered OK, function complete", flush=True)
 
 
 # ==========================================
