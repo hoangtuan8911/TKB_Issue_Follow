@@ -316,6 +316,7 @@ def render_sidebar(all_customers):
     st.sidebar.markdown("---")
     st.sidebar.caption(f"Danh sách Khách Hàng ({len(all_customers)}):")
     for cid, c in sorted(all_customers.items(), key=lambda kv: kv[1].get("name") or ""):
+        print(f"CHECKPOINT sidebar-loop: xử lý customer_id={cid} name={c.get('name')!r}", flush=True)
         pending, fixed, overdue = issue_counts(c)
         icon = "⚠️" if overdue else "📁"
         label = f"{icon} {c.get('name', '')}  (P:{pending}/F:{fixed})"
@@ -492,28 +493,39 @@ def render_activities(cid, iid, issue, cust_name):
 
 
 def render_issues_tab(all_customers):
+    print(f"CHECKPOINT issues-tab: start, selected_customer_id={st.session_state.get('selected_customer_id')}", flush=True)
     cid = st.session_state.get("selected_customer_id")
     if not cid or cid not in all_customers:
         st.info("👈 Chọn hoặc thêm 1 Khách hàng ở sidebar bên trái để bắt đầu.")
         return
 
     customer = all_customers[cid]
+    print(f"CHECKPOINT issues-tab: got customer name={customer.get('name')!r}", flush=True)
     st.subheader(f"📁 {customer.get('name', '')}")
 
     issues = customer.get("issues") or {}
+    print(f"CHECKPOINT issues-tab: {len(issues)} issues, before render_add_issue_form", flush=True)
     render_add_issue_form(cid, all_customers, len(issues) == 0)
+    print("CHECKPOINT issues-tab: render_add_issue_form OK", flush=True)
 
     if not issues:
         st.caption("Khách hàng này chưa có Issue nào.")
         return
 
+    print("CHECKPOINT issues-tab: before render_issue_list", flush=True)
     render_issue_list(cid, issues)
+    print("CHECKPOINT issues-tab: render_issue_list OK", flush=True)
 
     st.markdown("---")
     iid = st.session_state.selected_issue_id
+    print(f"CHECKPOINT issues-tab: selected_issue_id={iid}", flush=True)
     issue = issues[iid]
+    print(f"CHECKPOINT issues-tab: got issue title={issue.get('title')!r}", flush=True)
+    print("CHECKPOINT issues-tab: before render_edit_issue_form", flush=True)
     render_edit_issue_form(cid, iid, issue, all_customers)
+    print("CHECKPOINT issues-tab: render_edit_issue_form OK, before render_activities", flush=True)
     render_activities(cid, iid, issue, customer.get("name") or "")
+    print("CHECKPOINT issues-tab: render_activities OK, function complete", flush=True)
 
 
 # ==========================================
@@ -618,28 +630,46 @@ def render_import_tab(all_customers):
 # MAIN
 # ==========================================
 def main():
+    print("CHECKPOINT 1: main() start", flush=True)
     if not check_password():
         st.stop()
+    print("CHECKPOINT 2: password OK", flush=True)
 
     check_secrets()
+    print("CHECKPOINT 3: secrets OK", flush=True)
 
     st.title("🔧 Issue Follow — Hệ thống Quản lý & Gợi ý Khắc phục Sự cố Thiết bị")
+    print("CHECKPOINT 4: title rendered", flush=True)
 
     if "selected_customer_id" not in st.session_state:
         st.session_state.selected_customer_id = None
     if "selected_issue_id" not in st.session_state:
         st.session_state.selected_issue_id = None
+    print("CHECKPOINT 5: session_state init OK", flush=True)
 
     all_customers = load_all_customers()
+    print(f"CHECKPOINT 6: load_all_customers OK, {len(all_customers)} customers", flush=True)
+
     render_sidebar(all_customers)
+    print("CHECKPOINT 7: sidebar rendered OK", flush=True)
 
     tab1, tab2, tab3 = st.tabs(["📋 Quản lý Issues", "📊 Thống Kê", "⚙️ Đồng bộ dữ liệu ban đầu"])
+    print("CHECKPOINT 8: tabs created OK", flush=True)
+
     with tab1:
+        print("CHECKPOINT 9: entering render_issues_tab", flush=True)
         render_issues_tab(all_customers)
+        print("CHECKPOINT 10: render_issues_tab OK", flush=True)
     with tab2:
+        print("CHECKPOINT 11: entering render_stats_tab", flush=True)
         render_stats_tab(all_customers)
+        print("CHECKPOINT 12: render_stats_tab OK", flush=True)
     with tab3:
+        print("CHECKPOINT 13: entering render_import_tab", flush=True)
         render_import_tab(all_customers)
+        print("CHECKPOINT 14: render_import_tab OK", flush=True)
+
+    print("CHECKPOINT 15: main() complete, full script run finished", flush=True)
 
 
 if __name__ == "__main__":
