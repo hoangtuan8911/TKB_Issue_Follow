@@ -255,8 +255,8 @@ def render_sidebar(all_customers):
     with st.sidebar.expander("🔍 Tìm / Thêm Khách Hàng"):
         typed = st.text_input("Nhập tên Khách hàng", key="cust_search_input")
         if typed:
-            matches = {cid: c for cid, c in all_customers.items() if typed.lower() in c.get("name", "").lower()}
-            exact_exists = any(c.get("name", "") == typed for c in all_customers.values())
+            matches = {cid: c for cid, c in all_customers.items() if typed.lower() in (c.get("name") or "").lower()}
+            exact_exists = any((c.get("name") or "") == typed for c in all_customers.values())
 
             if matches:
                 st.caption(f"Tìm thấy {len(matches)} khách hàng trùng khớp:")
@@ -277,7 +277,7 @@ def render_sidebar(all_customers):
 
     st.sidebar.markdown("---")
     st.sidebar.caption(f"Danh sách Khách Hàng ({len(all_customers)}):")
-    for cid, c in sorted(all_customers.items(), key=lambda kv: kv[1].get("name", "")):
+    for cid, c in sorted(all_customers.items(), key=lambda kv: kv[1].get("name") or ""):
         pending, fixed, overdue = issue_counts(c)
         icon = "⚠️" if overdue else "📁"
         label = f"{icon} {c.get('name', '')}  (P:{pending}/F:{fixed})"
@@ -351,7 +351,7 @@ def render_edit_issue_form(cid, iid, issue, all_customers):
         e_title = st.text_input("Tiêu đề", value=issue.get("title", ""), key=f"edit_title_{iid}")
 
         device_options = get_all_device_names(all_customers)
-        current_dev = issue.get("device", "N/A")
+        current_dev = issue.get("device") or "N/A"
         dev_opts_full = sorted(set(device_options) | {current_dev})
         e_device = st.selectbox("Thiết bị", options=dev_opts_full,
                                  index=dev_opts_full.index(current_dev), key=f"edit_dev_{iid}")
@@ -388,15 +388,15 @@ def render_add_activity_form(cid, iid):
 
 def render_edit_activity_form(cid, iid, sid, step):
     with st.form(key=f"edit_form_{sid}"):
-        e_name = st.text_input("Tên hoạt động", value=step.get("activity", ""))
+        e_name = st.text_input("Tên hoạt động", value=step.get("activity") or "")
         cur_date = parse_date_safe(step.get("date", "")) or date.today()
         e_date = st.date_input("Ngày thực hiện", value=cur_date, format="DD/MM/YYYY")
         cur_lead = parse_date_safe(step.get("lead_time", ""))
         e_has_lead = st.checkbox("Có hạn phản hồi?", value=bool(cur_lead))
         e_lead = st.date_input("Hạn phản hồi", value=cur_lead or date.today(), format="DD/MM/YYYY") \
             if e_has_lead else None
-        e_pic = st.text_input("PIC", value=step.get("pic", ""))
-        e_result = st.text_area("Kết quả", value=step.get("result", ""))
+        e_pic = st.text_input("PIC", value=step.get("pic") or "")
+        e_result = st.text_area("Kết quả", value=step.get("result") or "")
         e_close = st.checkbox("Đóng Issue (Fixed)")
 
         if st.form_submit_button("Cập nhật Hoạt Động"):
@@ -416,7 +416,7 @@ def render_activities(cid, iid, issue, cust_name):
         return
 
     today = date.today()
-    for sid, step in sorted(steps.items(), key=lambda kv: kv[1].get("date", "")):
+    for sid, step in sorted(steps.items(), key=lambda kv: kv[1].get("date") or ""):
         lt = step.get("lead_time", "")
         deadline_display = "---"
         if lt:
@@ -475,7 +475,7 @@ def render_issues_tab(all_customers):
     iid = st.session_state.selected_issue_id
     issue = issues[iid]
     render_edit_issue_form(cid, iid, issue, all_customers)
-    render_activities(cid, iid, issue, customer.get("name", ""))
+    render_activities(cid, iid, issue, customer.get("name") or "")
 
 
 # ==========================================
@@ -489,11 +489,12 @@ def render_stats_tab(all_customers):
     for cust in all_customers.values():
         for issue in (cust.get("issues") or {}).values():
             if mode == "Khách hàng":
-                key = cust.get("name", "N/A")
+                key = cust.get("name") or "N/A"
             elif mode == "Tên Issue":
-                key = issue.get("title", "N/A")
+                key = issue.get("title") or "N/A"
             else:
-                key = issue.get("device", "N/A")
+                key = issue.get("device") or "N/A"
+            key = str(key).strip() or "N/A"  # ép về string sạch, tránh None/kiểu lạ lọt vào Arrow serialize
 
             e = stats.setdefault(key, {"Tổng số": 0, "Pending": 0, "Fixed": 0, "Quá hạn": 0})
             e["Tổng số"] += 1
@@ -510,9 +511,13 @@ def render_stats_tab(all_customers):
 
     df = pd.DataFrame.from_dict(stats, orient="index").sort_values("Tổng số", ascending=False)
     st.caption(f"{len(df)} nhóm | {int(df['Tổng số'].sum())} issue")
-    st.dataframe(df, width='stretch')
-    st.markdown("###### Top 8 theo tổng số Issue")
-    st.bar_chart(df["Tổng số"].head(8))
+    try:
+        st.dataframe(df, width='stretch')
+        st.markdown("###### Top 8 theo tổng số Issue")
+        st.bar_chart(df["Tổng số"].head(8))
+    except Exception as e:
+        st.error(f"Không hiện được bảng/biểu đồ thống kê (dữ liệu có thể chứa ký tự lạ): {e}")
+        st.write(df.to_dict())
 
 
 # ==========================================
@@ -548,7 +553,7 @@ def render_import_tab(all_customers):
             issues_out = {}
             for old_key, issue_data in (cust_data.get("issues") or {}).items():
                 # Hỗ trợ cả 2 định dạng cũ: title-là-key (rất cũ) và id-là-key có field "title" (mới hơn)
-                title = issue_data.get("title", old_key)
+                title = issue_data.get("title") or old_key
                 new_iid = str(uuid.uuid4())[:8]
                 steps_out = {}
                 for step in issue_data.get("steps", []):
@@ -556,10 +561,10 @@ def render_import_tab(all_customers):
                     steps_out[sid] = {k: v for k, v in step.items() if k != "id"}
                 issues_out[new_iid] = {
                     "title": title,
-                    "device": issue_data.get("device", "N/A"),
-                    "serial": issue_data.get("serial", "N/A"),
+                    "device": issue_data.get("device") or "N/A",
+                    "serial": issue_data.get("serial") or "N/A",
                     "status": issue_data.get("status", "Pending"),
-                    "url": issue_data.get("url", ""),
+                    "url": issue_data.get("url") or "",
                     "steps": steps_out,
                 }
                 count_issue += 1
