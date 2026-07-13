@@ -562,15 +562,13 @@ def render_stats_tab(all_customers):
         st.caption("Chưa có dữ liệu để thống kê.")
         return
 
-    df = pd.DataFrame.from_dict(stats, orient="index").sort_values("Tổng số", ascending=False)
-    print("CHECKPOINT stats: DataFrame.from_dict + sort_values OK", flush=True)
-    # Chuyển index (tên khách hàng/issue/thiết bị, có thể chứa dấu ngoặc, khoảng trắng, ký tự tiếng Việt
-    # phức tạp) thành 1 CỘT THƯỜNG thay vì để làm index của DataFrame. Đây là khác biệt duy nhất so với
-    # bài test pandas trước đó (test dùng cột thường, không dùng làm index) - và đúng chỗ log dừng lại
-    # ngay khi vào tab này với dữ liệu thật (10 khách hàng tên có dấu ngoặc như "THÀNH PHÁT (OLAM...)").
-    df = df.reset_index().rename(columns={"index": "Tên nhóm"})
-    df.index = range(len(df))  # ép index về số nguyên thường (RangeIndex sạch), tránh mọi rắc rối serialize
-    print("CHECKPOINT stats: reset_index OK", flush=True)
+    # QUAN TRỌNG: KHÔNG dùng pd.DataFrame.from_dict(stats, orient="index") - đây chính là dòng gây
+    # Segmentation fault đã xác định được qua log (crash ngay tại đây, trước khi kịp render bất cứ
+    # gì ra Streamlit). Chuyển sang dựng DataFrame kiểu list-of-dict tiêu chuẩn, đã test riêng và
+    # xác nhận an toàn với pandas==3.0.3 hiện tại trên Streamlit Cloud.
+    rows = [{"Tên nhóm": name, **v} for name, v in stats.items()]
+    df = pd.DataFrame(rows).sort_values("Tổng số", ascending=False).reset_index(drop=True)
+    print("CHECKPOINT stats: DataFrame(rows) + sort_values OK", flush=True)
 
     st.caption(f"{len(df)} nhóm | {int(df['Tổng số'].sum())} issue")
     print("CHECKPOINT stats: caption rendered, before st.dataframe", flush=True)
