@@ -532,8 +532,10 @@ def render_issues_tab(all_customers):
 # GIAO DIỆN: TAB "THỐNG KÊ"
 # ==========================================
 def render_stats_tab(all_customers):
+    print("CHECKPOINT stats: start", flush=True)
     st.subheader("📊 Thống Kê Issues")
     mode = st.radio("Nhóm theo:", ["Khách hàng", "Tên Issue", "Thiết bị"], horizontal=True)
+    print(f"CHECKPOINT stats: mode={mode}", flush=True)
 
     stats = {}
     for cust in all_customers.values():
@@ -554,17 +556,30 @@ def render_stats_tab(all_customers):
                 e["Pending"] += 1
             if is_issue_overdue(issue):
                 e["Quá hạn"] += 1
+    print(f"CHECKPOINT stats: built stats dict, {len(stats)} keys: {list(stats.keys())}", flush=True)
 
     if not stats:
         st.caption("Chưa có dữ liệu để thống kê.")
         return
 
     df = pd.DataFrame.from_dict(stats, orient="index").sort_values("Tổng số", ascending=False)
+    print("CHECKPOINT stats: DataFrame.from_dict + sort_values OK", flush=True)
+    # Chuyển index (tên khách hàng/issue/thiết bị, có thể chứa dấu ngoặc, khoảng trắng, ký tự tiếng Việt
+    # phức tạp) thành 1 CỘT THƯỜNG thay vì để làm index của DataFrame. Đây là khác biệt duy nhất so với
+    # bài test pandas trước đó (test dùng cột thường, không dùng làm index) - và đúng chỗ log dừng lại
+    # ngay khi vào tab này với dữ liệu thật (10 khách hàng tên có dấu ngoặc như "THÀNH PHÁT (OLAM...)").
+    df = df.reset_index().rename(columns={"index": "Tên nhóm"})
+    df.index = range(len(df))  # ép index về số nguyên thường (RangeIndex sạch), tránh mọi rắc rối serialize
+    print("CHECKPOINT stats: reset_index OK", flush=True)
+
     st.caption(f"{len(df)} nhóm | {int(df['Tổng số'].sum())} issue")
+    print("CHECKPOINT stats: caption rendered, before st.dataframe", flush=True)
     try:
         st.dataframe(df, width='stretch')
+        print("CHECKPOINT stats: st.dataframe OK, before st.bar_chart", flush=True)
         st.markdown("###### Top 8 theo tổng số Issue")
-        st.bar_chart(df["Tổng số"].head(8))
+        st.bar_chart(df.head(8), x="Tên nhóm", y="Tổng số")
+        print("CHECKPOINT stats: st.bar_chart OK, function complete", flush=True)
     except Exception as e:
         st.error(f"Không hiện được bảng/biểu đồ thống kê (dữ liệu có thể chứa ký tự lạ): {e}")
         st.write(df.to_dict())
